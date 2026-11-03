@@ -194,7 +194,9 @@ export async function recuperar({ correo, ip, agente }) {
         detalle: {},
       });
     });
-    enviarRecuperacion({ correo, url: `${env.appUrl}/restablecer?token=${token}` });
+    await enviarRecuperacion({
+  correo,
+  url: `${env.appUrl}/restablecer?token=${token}`,});
   }
   return { mensaje: 'Si el correo está registrado, se generó un enlace de recuperación.' };
 }

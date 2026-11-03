@@ -52,6 +52,7 @@ services:
       ADMIN_INICIAL_PASSWORD: ${ADMIN_INICIAL_PASSWORD:?Defina ADMIN_INICIAL_PASSWORD}
       ADMIN_INICIAL_NOMBRE: ${ADMIN_INICIAL_NOMBRE:-Administrador}
       ADMIN_INICIAL_APELLIDO: ${ADMIN_INICIAL_APELLIDO:-Inicial}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
     volumes:
       - uploads:/app/uploads
     healthcheck:
