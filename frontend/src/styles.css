@@ -163,3 +163,66 @@ body {
     z-index: 1030;
   }
 }
+/* ============================================
+   SIGOT - MODALES RESPONSIVOS
+   ============================================ */
+
+/* Limitar la altura del modal a la pantalla */
+
+.modal-dialog-scrollable .modal-content {
+  max-height: 90dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Formulario dentro del modal */
+
+.modal-dialog-scrollable .modal-content > form {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Permitir desplazamiento del contenido */
+
+.modal-dialog-scrollable .modal-content > form > .modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Mantener visibles los botones */
+
+.modal-dialog-scrollable .modal-content > form > .modal-footer {
+  flex-shrink: 0;
+  background: #ffffff;
+  border-top: 1px solid #e6ebf0;
+}
+
+/* ============================================
+   TELÉFONOS
+   ============================================ */
+
+@media (max-width: 575.98px) {
+
+  .modal-dialog-scrollable {
+    margin: 0.5rem;
+    height: calc(100dvh - 1rem);
+  }
+
+  .modal-dialog-scrollable .modal-content {
+    max-height: 100%;
+  }
+
+  .modal-body {
+    padding: 1rem;
+  }
+
+  .modal-footer {
+    padding: 0.75rem;
+  }
+
+}
