@@ -86,10 +86,21 @@ function prepararAlmacenes(base) {
   if (!base.objectStoreNames.contains('archivos')) base.createObjectStore('archivos', { keyPath: 'id' });
 }
 
+// Limpia únicamente cachés privadas de SIGOT.
+// Conserva los archivos públicos almacenados por Workbox.
+
 export async function limpiarCachesAutenticadas() {
   if (typeof caches === 'undefined') return;
+
   const claves = await caches.keys();
-  await Promise.all(claves.map((clave) => caches.delete(clave)));
+
+  const cachesPrivadas = claves.filter((clave) =>
+    clave.startsWith('sigot-auth-')
+  );
+
+  await Promise.all(
+    cachesPrivadas.map((clave) => caches.delete(clave))
+  );
 }
 
 async function conBase(fn) {
