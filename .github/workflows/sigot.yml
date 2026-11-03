@@ -21,10 +21,6 @@ on:
 permissions:
   contents: read
 
-# ============================================================
-# VARIABLES EXCLUSIVAS DE INTEGRACION CONTINUA
-# ============================================================
-
 env:
   NODE_VERSION: "22"
 
@@ -42,10 +38,6 @@ env:
   SEED_WAREHOUSE_PASSWORD: CiBodega123!
 
 jobs:
-
-  # ==========================================================
-  # JOB 1 - PRUEBAS AUTOMATICAS
-  # ==========================================================
 
   pruebas:
     name: Instalar, probar y compilar
@@ -142,10 +134,6 @@ jobs:
           npm --prefix backend audit --omit=dev || true
           npm --prefix frontend audit || true
 
-  # ==========================================================
-  # JOB 2 - CONSTRUIR IMAGENES DOCKER
-  # ==========================================================
-
   imagenes:
     name: Construir imagenes Docker
     needs: pruebas
@@ -227,10 +215,6 @@ jobs:
             nginx:1.27-alpine \
             sh -c "apk add --no-cache openssl >/dev/null && mkdir -p /tmp/sigot-certs && openssl req -x509 -nodes -newkey rsa:2048 -keyout /tmp/sigot-certs/privkey.pem -out /tmp/sigot-certs/fullchain.pem -subj /CN=localhost -days 1 && nginx -t"
 
-  # ==========================================================
-  # JOB 3 - PUBLICAR EN DOCKER HUB
-  # ==========================================================
-
   publicar:
     name: Publicar imagenes en Docker Hub
     needs: imagenes
@@ -238,7 +222,7 @@ jobs:
 
     if: >-
       ${{
-        (github.event_name == 'workflow_dispatch' && inputs.publicar_imagenes == true) ||
+        (github.event_name == 'workflow_dispatch' && (inputs.publicar_imagenes == true || inputs.desplegar == true)) ||
         (github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.SIGOT_DEPLOY_ENABLED == 'true')
       }}
 
@@ -287,10 +271,6 @@ jobs:
           docker push "$DOCKERHUB_USERNAME/sigot-frontend:$SHA"
           docker push "$DOCKERHUB_USERNAME/sigot-frontend:$REF"
 
-  # ==========================================================
-  # JOB 4 - DESPLIEGUE AUTOMATICO EN DIGITALOCEAN
-  # ==========================================================
-
   desplegar:
     name: Desplegar en DigitalOcean
 
@@ -300,11 +280,11 @@ jobs:
       ${{
         !cancelled() &&
         needs.imagenes.result == 'success' &&
-        (needs.publicar.result == 'success' || needs.publicar.result == 'skipped') &&
+        needs.publicar.result == 'success' &&
         github.ref == 'refs/heads/main' &&
         (
           (github.event_name == 'workflow_dispatch' && inputs.desplegar == true) ||
-          (github.event_name == 'push' && vars.SIGOT_DEPLOY_ENABLED == 'true' && needs.publicar.result == 'success')
+          (github.event_name == 'push' && vars.SIGOT_DEPLOY_ENABLED == 'true')
         )
       }}
 
@@ -317,7 +297,8 @@ jobs:
 
     steps:
 
-      - name: Configurar conexion SSH
+      - name: Configurar y validar conexion SSH
+        shell: bash
         env:
           SSH_KEY: ${{ secrets.DIGITALOCEAN_SSH_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.DIGITALOCEAN_KNOWN_HOSTS }}
@@ -325,19 +306,50 @@ jobs:
         run: |
           set -euo pipefail
 
-          test -n "$SSH_KEY"
-          test -n "$SSH_KNOWN_HOSTS"
+          if [ -z "$SSH_KEY" ] || [ -z "$SSH_KNOWN_HOSTS" ]; then
+            echo "::error::Faltan DIGITALOCEAN_SSH_KEY o DIGITALOCEAN_KNOWN_HOSTS"
+            exit 1
+          fi
 
           umask 077
           mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
 
-          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
-          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > "$HOME/.ssh/known_hosts"
 
           chmod 600 "$HOME/.ssh/id_ed25519"
           chmod 600 "$HOME/.ssh/known_hosts"
 
+          if ! ssh-keygen -y -P "" -f "$HOME/.ssh/id_ed25519" > /dev/null 2>&1; then
+            echo "::error::DIGITALOCEAN_SSH_KEY no contiene una clave privada SSH valida sin passphrase"
+            exit 1
+          fi
+
+          echo "Clave privada SSH validada correctamente"
+
+      - name: Verificar acceso SSH a DigitalOcean
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.DIGITALOCEAN_HOST }}
+          DEPLOY_USER: ${{ secrets.DIGITALOCEAN_USER }}
+
+        run: |
+          set -euo pipefail
+
+          test -n "$DEPLOY_HOST"
+          test -n "$DEPLOY_USER"
+
+          ssh -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              -o ConnectTimeout=15 \
+              -i "$HOME/.ssh/id_ed25519" \
+              "$DEPLOY_USER@$DEPLOY_HOST" \
+              'echo "Conexion SSH exitosa"'
+
       - name: Desplegar SIGOT
+        shell: bash
         env:
           DEPLOY_HOST: ${{ secrets.DIGITALOCEAN_HOST }}
           DEPLOY_USER: ${{ secrets.DIGITALOCEAN_USER }}
@@ -356,6 +368,7 @@ jobs:
               'sudo -n /usr/local/sbin/sigot-deploy.sh'
 
       - name: Verificar aplicacion por HTTPS
+        shell: bash
         run: |
           curl --fail --silent --show-error --retry 5 --retry-delay 5 \
             https://sigot.emersontzib.site/ -o /dev/null
