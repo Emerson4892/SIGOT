@@ -7,11 +7,11 @@ on:
   workflow_dispatch:
     inputs:
       publicar_imagenes:
-        description: Publicar imágenes versionadas en Docker Hub
+        description: Publicar imagenes versionadas en Docker Hub
         type: boolean
         default: false
       desplegar:
-        description: Desplegar en DigitalOcean (requiere SIGOT_DEPLOY_ENABLED y secretos)
+        description: Desplegar en DigitalOcean despues de las pruebas
         type: boolean
         default: false
 
@@ -19,7 +19,7 @@ permissions:
   contents: read
 
 env:
-  # Valores solo de la base efímera de GitHub Actions. No son secretos de producción.
+  # Valores exclusivos de CI; nunca son credenciales de produccion.
   NODE_VERSION: "22"
   POSTGRES_USER: sigot
   POSTGRES_PASSWORD: sigot_ci_password
@@ -118,7 +118,7 @@ jobs:
           echo "::endgroup::"
 
   imagenes:
-    name: Construir imágenes Docker
+    name: Construir imagenes Docker
     needs: pruebas
     runs-on: ubuntu-latest
     steps:
@@ -129,7 +129,7 @@ jobs:
         run: docker build -t sigot-frontend:${{ github.sha }} ./frontend
       - name: Construir proxy
         run: docker build -t sigot-proxy:${{ github.sha }} -f deploy/Dockerfile.proxy deploy
-      - name: Validar Compose de producción
+      - name: Validar Compose de produccion
         run: |
           docker compose --env-file .env.production.example -f docker-compose.prod.yml config > /tmp/sigot-compose.yml
           python3 - <<'PY'
@@ -140,7 +140,7 @@ jobs:
               return re.search(rf"published:\s*['\"]?{puerto}\b", text) or re.search(rf"['\"]{puerto}:{puerto}['\"]", text)
           for puerto in ("5432", "4000"):
               if publicado(puerto):
-                  raise SystemExit(f"El puerto {puerto} quedó publicado")
+                  raise SystemExit(f"El puerto {puerto} quedo publicado")
           for puerto in ("80", "443"):
               if not publicado(puerto):
                   raise SystemExit(f"Falta el puerto {puerto}")
@@ -148,10 +148,10 @@ jobs:
               if imagen not in text:
                   raise SystemExit(f"Falta la imagen {imagen}")
           if not re.search(r"SEED_DEMO_USERS:\s*['\"]?false", text):
-              raise SystemExit("SEED_DEMO_USERS no está en false")
+              raise SystemExit("SEED_DEMO_USERS no esta en false")
           if not re.search(r"COOKIE_SECURE:\s*['\"]?true", text):
-              raise SystemExit("COOKIE_SECURE no está en true")
-          print("Compose de producción válido")
+              raise SystemExit("COOKIE_SECURE no esta en true")
+          print("Compose de produccion valido")
           PY
       - name: Validar Nginx sin usar certificados del repositorio
         run: |
@@ -164,7 +164,7 @@ jobs:
             sh -c "apk add --no-cache openssl >/dev/null && mkdir -p /tmp/sigot-certs && openssl req -x509 -nodes -newkey rsa:2048 -keyout /tmp/sigot-certs/privkey.pem -out /tmp/sigot-certs/fullchain.pem -subj /CN=localhost -days 1 && nginx -t"
 
   publicar:
-    name: Publicar imágenes en Docker Hub
+    name: Publicar imagenes en Docker Hub
     needs: imagenes
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.publicar_imagenes }}
@@ -176,7 +176,7 @@ jobs:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           if [ -z "$DOCKERHUB_USERNAME" ] || [ -z "$DOCKERHUB_TOKEN" ]; then
-            echo "Faltan DOCKERHUB_USERNAME o DOCKERHUB_TOKEN. La publicación permanece deshabilitada."
+            echo "Faltan DOCKERHUB_USERNAME o DOCKERHUB_TOKEN."
             exit 1
           fi
       - uses: docker/login-action@v3
@@ -198,22 +198,37 @@ jobs:
 
   desplegar:
     name: Desplegar en DigitalOcean
-    needs: publicar
+    needs: imagenes
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.desplegar == true && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.desplegar && vars.SIGOT_DEPLOY_ENABLED == 'true' }}
     environment: production
+    concurrency:
+      group: sigot-production
+      cancel-in-progress: false
     steps:
-      - name: Despliegue retenido
+      - name: Configurar conexion SSH
         env:
-          HOST: ${{ secrets.DIGITALOCEAN_HOST }}
-          USER: ${{ secrets.DIGITALOCEAN_USER }}
-          KEY: ${{ secrets.DIGITALOCEAN_SSH_KEY }}
+          SSH_KEY: ${{ secrets.DIGITALOCEAN_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.DIGITALOCEAN_KNOWN_HOSTS }}
         run: |
-          echo "Despliegue automático deshabilitado. Este job no abre SSH ni copia archivos."
-          echo "Aunque SIGOT_DEPLOY_ENABLED sea true, el job termina aquí hasta autorizar el procedimiento."
-          if [ -z "$HOST" ] || [ -z "$USER" ] || [ -z "$KEY" ]; then
-            echo "Faltan secretos de DigitalOcean."
-            exit 1
-          fi
-          echo "Los secretos existen, pero este flujo no despliega hasta que se autorice el procedimiento de corte."
-          exit 1
+          set -euo pipefail
+          test -n "$SSH_KEY"
+          test -n "$SSH_KNOWN_HOSTS"
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: Desplegar SIGOT
+        env:
+          DEPLOY_HOST: ${{ secrets.DIGITALOCEAN_HOST }}
+          DEPLOY_USER: ${{ secrets.DIGITALOCEAN_USER }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_HOST"
+          test -n "$DEPLOY_USER"
+          ssh -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              -i ~/.ssh/id_ed25519 \
+              "$DEPLOY_USER@$DEPLOY_HOST" \
+              'sudo -n /usr/local/sbin/sigot-deploy.sh'
