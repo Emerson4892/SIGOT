@@ -1,0 +1,219 @@
+name: SIGOT
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      publicar_imagenes:
+        description: Publicar imágenes versionadas en Docker Hub
+        type: boolean
+        default: false
+      desplegar:
+        description: Desplegar en DigitalOcean (requiere SIGOT_DEPLOY_ENABLED y secretos)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  # Valores solo de la base efímera de GitHub Actions. No son secretos de producción.
+  NODE_VERSION: "22"
+  POSTGRES_USER: sigot
+  POSTGRES_PASSWORD: sigot_ci_password
+  POSTGRES_DB: sigot
+  JWT_ACCESS_SECRET: sigot-ci-jwt-secret-de-al-menos-32-caracteres
+  SEED_DEMO_USERS: "true"
+  SEED_ADMIN_PASSWORD: CiAdmin123!
+  SEED_OPERATOR_PASSWORD: CiOperador123!
+  SEED_SUPERVISOR_PASSWORD: CiSupervisor123!
+  SEED_TECHNICIAN_PASSWORD: CiTecnico123!
+  SEED_WAREHOUSE_PASSWORD: CiBodega123!
+
+jobs:
+  pruebas:
+    name: Instalar, probar y compilar
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: sigot
+          POSTGRES_PASSWORD: sigot_ci_password
+          POSTGRES_DB: sigot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sigot -d sigot"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://sigot:sigot_ci_password@localhost:5432/sigot
+      TEST_DATABASE_URL: postgresql://sigot:sigot_ci_password@localhost:5432/sigot_test
+      CORS_ORIGIN: http://127.0.0.1:5174
+      APP_URL: http://127.0.0.1:5174
+      COOKIE_SECURE: "false"
+      LOG_LEVEL: silent
+    steps:
+      - uses: actions/checkout@v4
+      - name: Comprobar que no se versionan secretos
+        run: |
+          tracked=$(git ls-files | grep -E '(^|/)\.env$|(^|/)\.env\.production$|(^|/)\.seed-credentials$|\.pem$' || true)
+          if [ -n "$tracked" ]; then
+            echo "Hay secretos versionados:"
+            printf '%s\n' "$tracked"
+            exit 1
+          fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Instalar dependencias del backend
+        working-directory: backend
+        run: npm ci
+
+      - name: Generar cliente Prisma
+        working-directory: backend
+        run: npx prisma generate
+
+      - name: Ejecutar pruebas del backend
+        working-directory: backend
+        run: npm test
+
+      - name: Instalar dependencias del frontend
+        working-directory: frontend
+        run: npm ci
+
+      - name: Compilar el frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Ejecutar pruebas del frontend y la PWA
+        working-directory: frontend
+        run: npm test
+
+      - name: Instalar Chromium para Playwright
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Ejecutar pruebas de interfaz
+        working-directory: frontend
+        run: npm run test:e2e
+
+      - name: Revisar dependencias
+        run: |
+          echo "::group::npm audit backend"
+          npm --prefix backend audit --omit=dev || true
+          echo "::endgroup::"
+          echo "::group::npm audit frontend"
+          npm --prefix frontend audit || true
+          echo "::endgroup::"
+
+  imagenes:
+    name: Construir imágenes Docker
+    needs: pruebas
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construir backend
+        run: docker build -t sigot-backend:${{ github.sha }} ./backend
+      - name: Construir frontend
+        run: docker build -t sigot-frontend:${{ github.sha }} ./frontend
+      - name: Construir proxy
+        run: docker build -t sigot-proxy:${{ github.sha }} -f deploy/Dockerfile.proxy deploy
+      - name: Validar Compose de producción
+        run: |
+          docker compose --env-file .env.production.example -f docker-compose.prod.yml config > /tmp/sigot-compose.yml
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          text = Path("/tmp/sigot-compose.yml").read_text()
+          def publicado(puerto):
+              return re.search(rf"published:\s*['\"]?{puerto}\b", text) or re.search(rf"['\"]{puerto}:{puerto}['\"]", text)
+          for puerto in ("5432", "4000"):
+              if publicado(puerto):
+                  raise SystemExit(f"El puerto {puerto} quedó publicado")
+          for puerto in ("80", "443"):
+              if not publicado(puerto):
+                  raise SystemExit(f"Falta el puerto {puerto}")
+          for imagen in ("postgres:17", "sigot-backend:local", "sigot-frontend:local", "sigot-proxy:local", "certbot/certbot:v2.11.0"):
+              if imagen not in text:
+                  raise SystemExit(f"Falta la imagen {imagen}")
+          if not re.search(r"SEED_DEMO_USERS:\s*['\"]?false", text):
+              raise SystemExit("SEED_DEMO_USERS no está en false")
+          if not re.search(r"COOKIE_SECURE:\s*['\"]?true", text):
+              raise SystemExit("COOKIE_SECURE no está en true")
+          print("Compose de producción válido")
+          PY
+      - name: Validar Nginx sin usar certificados del repositorio
+        run: |
+          docker run --rm \
+            -v "$PWD/deploy/nginx-bootstrap.conf:/etc/nginx/conf.d/default.conf:ro" \
+            nginx:1.27-alpine nginx -t
+          docker run --rm \
+            -v "$PWD/deploy/nginx-edge.conf:/etc/nginx/conf.d/default.conf:ro" \
+            nginx:1.27-alpine \
+            sh -c "apk add --no-cache openssl >/dev/null && mkdir -p /tmp/sigot-certs && openssl req -x509 -nodes -newkey rsa:2048 -keyout /tmp/sigot-certs/privkey.pem -out /tmp/sigot-certs/fullchain.pem -subj /CN=localhost -days 1 && nginx -t"
+
+  publicar:
+    name: Publicar imágenes en Docker Hub
+    needs: imagenes
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publicar_imagenes }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Comprobar secretos de Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "$DOCKERHUB_USERNAME" ] || [ -z "$DOCKERHUB_TOKEN" ]; then
+            echo "Faltan DOCKERHUB_USERNAME o DOCKERHUB_TOKEN. La publicación permanece deshabilitada."
+            exit 1
+          fi
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Construir y publicar
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref_name }}
+        run: |
+          docker build -t "$DOCKERHUB_USERNAME/sigot-backend:$SHA" -t "$DOCKERHUB_USERNAME/sigot-backend:$REF" ./backend
+          docker build -t "$DOCKERHUB_USERNAME/sigot-frontend:$SHA" -t "$DOCKERHUB_USERNAME/sigot-frontend:$REF" ./frontend
+          docker push "$DOCKERHUB_USERNAME/sigot-backend:$SHA"
+          docker push "$DOCKERHUB_USERNAME/sigot-backend:$REF"
+          docker push "$DOCKERHUB_USERNAME/sigot-frontend:$SHA"
+          docker push "$DOCKERHUB_USERNAME/sigot-frontend:$REF"
+
+  desplegar:
+    name: Desplegar en DigitalOcean
+    needs: publicar
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.desplegar && vars.SIGOT_DEPLOY_ENABLED == 'true' }}
+    environment: production
+    steps:
+      - name: Despliegue retenido
+        env:
+          HOST: ${{ secrets.DIGITALOCEAN_HOST }}
+          USER: ${{ secrets.DIGITALOCEAN_USER }}
+          KEY: ${{ secrets.DIGITALOCEAN_SSH_KEY }}
+        run: |
+          echo "Despliegue automático deshabilitado. Este job no abre SSH ni copia archivos."
+          echo "Aunque SIGOT_DEPLOY_ENABLED sea true, el job termina aquí hasta autorizar el procedimiento."
+          if [ -z "$HOST" ] || [ -z "$USER" ] || [ -z "$KEY" ]; then
+            echo "Faltan secretos de DigitalOcean."
+            exit 1
+          fi
+          echo "Los secretos existen, pero este flujo no despliega hasta que se autorice el procedimiento de corte."
+          exit 1

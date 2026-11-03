@@ -1,0 +1,347 @@
+openapi: 3.0.3
+info:
+  title: SIGOT API
+  version: 1.0.0
+  description: |
+    API REST del Sistema Integral de Gestión de Operaciones Técnicas.
+    La sesión web usa las cookies HttpOnly sigot_access y sigot_refresh.
+    Las escrituras exigen el encabezado X-CSRF-Token devuelto al iniciar sesión, refrescar o consultar el perfil.
+    Las listas responden `{ datos, meta: { pagina, tamano, total, paginas } }`.
+    Los errores responden `{ error: { codigo, mensaje, detalles } }`.
+servers:
+  - url: http://localhost:4000/api
+tags:
+  - name: salud
+  - name: auth
+  - name: usuarios
+  - name: roles
+  - name: catalogos
+  - name: operaciones
+  - name: inventario
+  - name: reportes
+security:
+  - cookieAuth: []
+paths:
+  /salud:
+    get:
+      tags: [salud]
+      security: []
+      summary: Comprueba el proceso y PostgreSQL
+      responses:
+        '200':
+          description: Base disponible
+  /auth/login:
+    post:
+      tags: [auth]
+      security: []
+      summary: Inicia sesión y emite cookies
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [correo, contrasena]
+              properties:
+                correo: { type: string, format: email }
+                contrasena: { type: string }
+      responses:
+        '200': { description: Usuario y token CSRF }
+        '401': { description: Credenciales inválidas }
+  /auth/refresh:
+    post:
+      tags: [auth]
+      security: []
+      summary: Rota el refresh token
+      responses:
+        '200': { description: Nueva sesión }
+        '401': { description: Refresh ausente o revocado }
+  /auth/logout:
+    post:
+      tags: [auth]
+      security: []
+      summary: Revoca el refresh y limpia cookies
+      responses:
+        '200': { description: Sesión cerrada }
+  /auth/recuperar:
+    post:
+      tags: [auth]
+      security: []
+      summary: Solicita recuperación sin revelar si el correo existe
+      responses:
+        '200': { description: Respuesta genérica }
+  /auth/restablecer:
+    post:
+      tags: [auth]
+      security: []
+      summary: Consume un token de recuperación de un solo uso
+      responses:
+        '200': { description: Contraseña actualizada }
+  /auth/perfil:
+    get:
+      tags: [auth]
+      summary: Perfil, roles, permisos y token CSRF
+      responses:
+        '200': { description: Perfil }
+  /auth/cambiar-clave:
+    post:
+      tags: [auth]
+      summary: Cambia la contraseña y emite una sesión nueva
+      responses:
+        '200': { description: Sesión renovada }
+  /auth/sesiones:
+    get:
+      tags: [auth]
+      summary: Sesiones activas del usuario
+      responses:
+        '200': { description: Listado }
+  /auth/sesiones/{id}:
+    delete:
+      tags: [auth]
+      summary: Revoca una sesión propia
+      parameters:
+        - $ref: '#/components/parameters/id'
+      responses:
+        '200': { description: Revocada }
+  /usuarios:
+    get:
+      tags: [usuarios]
+      summary: Lista usuarios
+      responses:
+        '200': { description: Página }
+    post:
+      tags: [usuarios]
+      summary: Crea un usuario obligado a cambiar la contraseña
+      responses:
+        '201': { description: Creado }
+  /usuarios/{id}:
+    patch:
+      tags: [usuarios]
+      summary: Actualiza datos del usuario
+      parameters: [{ $ref: '#/components/parameters/id' }]
+      responses:
+        '200': { description: Actualizado }
+  /usuarios/{id}/roles:
+    put:
+      tags: [usuarios]
+      summary: Asigna roles
+      parameters: [{ $ref: '#/components/parameters/id' }]
+      responses:
+        '200': { description: Roles actualizados }
+  /usuarios/{id}/desactivar:
+    post:
+      tags: [usuarios]
+      summary: Desactiva y revoca sesiones
+      parameters: [{ $ref: '#/components/parameters/id' }]
+      responses:
+        '200': { description: Desactivado }
+  /usuarios/{id}/activar:
+    post:
+      tags: [usuarios]
+      summary: Activa un usuario
+      parameters: [{ $ref: '#/components/parameters/id' }]
+      responses:
+        '200': { description: Activado }
+  /roles:
+    get:
+      tags: [roles]
+      summary: Lista roles
+      responses:
+        '200': { description: Roles }
+  /roles/permisos:
+    get:
+      tags: [roles]
+      summary: Catálogo de permisos
+      responses:
+        '200': { description: Permisos }
+  /permisos:
+    get:
+      tags: [roles]
+      summary: Catálogo de permisos
+      responses:
+        '200': { description: Permisos }
+  /roles/{id}/permisos:
+    put:
+      tags: [roles]
+      summary: Reemplaza los permisos de un rol
+      parameters: [{ $ref: '#/components/parameters/id' }]
+      responses:
+        '200': { description: Actualizado }
+  /clientes:
+    get: { tags: [catalogos], summary: Lista clientes, responses: { '200': { description: Página } } }
+    post: { tags: [catalogos], summary: Crea un cliente, responses: { '201': { description: Creado } } }
+  /clientes/{id}:
+    patch: { tags: [catalogos], summary: Edita un cliente, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Actualizado } } }
+  /ubicaciones:
+    get: { tags: [catalogos], summary: Lista ubicaciones, responses: { '200': { description: Página } } }
+    post: { tags: [catalogos], summary: Crea una ubicación de un cliente, responses: { '201': { description: Creada } } }
+  /ubicaciones/{id}:
+    patch: { tags: [catalogos], summary: Edita una ubicación, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Actualizada } } }
+  /tipos-activo:
+    get: { tags: [catalogos], summary: Lista tipos de activo, responses: { '200': { description: Página } } }
+    post: { tags: [catalogos], summary: Crea un tipo, responses: { '201': { description: Creado } } }
+  /tipos-activo/{id}:
+    patch: { tags: [catalogos], summary: Edita un tipo, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Actualizado } } }
+  /activos:
+    get: { tags: [catalogos], summary: Lista activos, responses: { '200': { description: Página sin secreto QR } } }
+    post: { tags: [catalogos], summary: Registra un activo y genera su QR, responses: { '201': { description: Creado } } }
+  /activos/validar-qr:
+    post:
+      tags: [operaciones]
+      summary: Verifica que el QR corresponda al activo de la orden
+      responses:
+        '200': { description: Válido }
+        '422': { description: QR no corresponde }
+  /activos/{id}:
+    get: { tags: [catalogos], summary: Obtiene un activo, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Activo } } }
+    patch: { tags: [catalogos], summary: Edita un activo, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Actualizado } } }
+  /activos/{id}/qr:
+    get: { tags: [catalogos], summary: PNG del QR, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: image/png } } }
+  /activos/{id}/qr-contenido:
+    get: { tags: [catalogos], summary: Texto del QR, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Contenido } } }
+  /activos/{id}/historial:
+    get: { tags: [operaciones], summary: Historial técnico del activo, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Eventos } } }
+  /incidentes:
+    get: { tags: [operaciones], summary: Lista incidentes, responses: { '200': { description: Página } } }
+    post: { tags: [operaciones], summary: Registra un incidente y marca el activo con falla, responses: { '201': { description: Creado } } }
+  /incidentes/{id}:
+    patch: { tags: [operaciones], summary: Edita un incidente abierto, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Actualizado } } }
+  /incidentes/{id}/convertir:
+    post: { tags: [operaciones], summary: Crea la orden de trabajo del incidente, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '201': { description: Orden } } }
+  /incidentes/{id}/cancelar:
+    post: { tags: [operaciones], summary: Cancela un incidente abierto, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Cancelado } } }
+  /ordenes:
+    get: { tags: [operaciones], summary: Lista órdenes visibles para el rol, responses: { '200': { description: Página } } }
+    post: { tags: [operaciones], summary: Crea una orden, responses: { '201': { description: Orden } } }
+  /ordenes/vencidas:
+    get: { tags: [operaciones], summary: Órdenes con SLA de resolución vencido, responses: { '200': { description: Página } } }
+  /ordenes/proximas:
+    get: { tags: [operaciones], summary: Órdenes que vencen en las próximas dos horas, responses: { '200': { description: Página } } }
+  /ordenes/{id}:
+    get: { tags: [operaciones], summary: Detalle. El técnico recibe 404 si no está asignado, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Orden }, '404': { description: No visible } } }
+  /ordenes/{id}/historial:
+    get: { tags: [operaciones], summary: Cambios de estado, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Historial } } }
+  /ordenes/{id}/asignar:
+    post: { tags: [operaciones], summary: Asigna técnico o cuadrilla, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Asignada } } }
+  /ordenes/{id}/aceptar:
+    post: { tags: [operaciones], summary: El técnico acepta la asignación, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Aceptada } } }
+  /ordenes/{id}/rechazar:
+    post: { tags: [operaciones], summary: El técnico rechaza con motivo. La orden vuelve a pendiente, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Rechazada } } }
+  /ordenes/{id}/iniciar:
+    post: { tags: [operaciones], summary: Valida el QR e inicia el trabajo, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: En proceso }, '422': { description: QR inválido } } }
+  /ordenes/{id}/diagnostico:
+    post: { tags: [operaciones], summary: Registra el diagnóstico, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Guardado } } }
+  /ordenes/{id}/solucion:
+    post: { tags: [operaciones], summary: Registra la solución, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Guardada } } }
+  /ordenes/{id}/repuestos:
+    post: { tags: [operaciones], summary: Consume repuestos y descuenta stock, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Consumo }, '409': { description: Stock insuficiente } } }
+  /ordenes/{id}/checklist:
+    post: { tags: [operaciones], summary: Completa un checklist, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Completado }, '422': { description: Falta una actividad obligatoria } } }
+  /ordenes/{id}/evidencias:
+    post: { tags: [operaciones], summary: Adjunta JPG, PNG, WEBP o PDF de hasta 8 MB, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '201': { description: Archivo guardado }, '422': { description: Tipo o tamaño inválido } } }
+  /ordenes/{id}/solicitar-cierre:
+    post: { tags: [operaciones], summary: Solicita cierre si hay diagnóstico, solución y evidencia, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Pendiente de aprobación }, '422': { description: Falta evidencia o diagnóstico } } }
+  /ordenes/{id}/aprobar:
+    post: { tags: [operaciones], summary: El supervisor aprueba. La prioridad crítica exige token, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Finalizada }, '403': { description: Autoaprobación } } }
+  /ordenes/{id}/rechazar-cierre:
+    post: { tags: [operaciones], summary: Rechaza el cierre con observaciones, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Rechazada } } }
+  /ordenes/{id}/reanudar:
+    post: { tags: [operaciones], summary: Reanuda una orden rechazada, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: En proceso } } }
+  /ordenes/{id}/cancelar:
+    post: { tags: [operaciones], summary: Cancela la orden con motivo, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Cancelada } } }
+  /sla:
+    get: { tags: [operaciones], summary: Políticas de respuesta y resolución, responses: { '200': { description: Políticas } } }
+  /sla/{prioridad}:
+    put:
+      tags: [operaciones]
+      summary: Actualiza la política de una prioridad
+      parameters:
+        - name: prioridad
+          in: path
+          required: true
+          schema: { type: string, enum: [BAJA, MEDIA, ALTA, CRITICA] }
+      responses:
+        '200': { description: Actualizada }
+  /tecnicos:
+    get: { tags: [catalogos], summary: Lista técnicos, responses: { '200': { description: Página } } }
+    post: { tags: [catalogos], summary: Crea usuario técnico y ficha, responses: { '201': { description: Creado } } }
+  /tecnicos/{id}:
+    patch: { tags: [catalogos], summary: Edita un técnico, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Actualizado } } }
+  /cuadrillas:
+    get: { tags: [catalogos], summary: Lista cuadrillas y miembros, responses: { '200': { description: Página } } }
+    post: { tags: [catalogos], summary: Crea una cuadrilla, responses: { '201': { description: Creada } } }
+  /cuadrillas/{id}:
+    patch: { tags: [catalogos], summary: Edita responsable y miembros, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Actualizada } } }
+  /repuestos:
+    get: { tags: [inventario], summary: Lista repuestos, responses: { '200': { description: Página } } }
+    post: { tags: [inventario], summary: Crea un repuesto, responses: { '201': { description: Creado } } }
+  /repuestos/alertas:
+    get: { tags: [inventario], summary: Repuestos en o bajo el mínimo, responses: { '200': { description: Alertas } } }
+  /repuestos/categorias:
+    get: { tags: [inventario], summary: Categorías, responses: { '200': { description: Categorías } } }
+    post: { tags: [inventario], summary: Crea una categoría, responses: { '201': { description: Creada } } }
+  /repuestos/{id}:
+    patch: { tags: [inventario], summary: Edita datos del repuesto sin alterar el stock por esta vía, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Actualizado } } }
+  /movimientos:
+    get: { tags: [inventario], summary: Lista movimientos, responses: { '200': { description: Página } } }
+    post: { tags: [inventario], summary: Entrada, salida, entrega o devolución. El consumo se declara en la orden, responses: { '201': { description: Movimiento }, '409': { description: Stock insuficiente } } }
+  /checklists/plantillas:
+    get: { tags: [operaciones], summary: Plantillas, responses: { '200': { description: Plantillas } } }
+    post: { tags: [operaciones], summary: Crea una plantilla, responses: { '201': { description: Creada } } }
+  /checklists/plantillas/{id}:
+    patch: { tags: [operaciones], summary: Edita una plantilla, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Actualizada } } }
+  /evidencias/{id}/archivo:
+    get: { tags: [operaciones], summary: Descarga autenticada del archivo, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Archivo } } }
+  /mantenimientos:
+    get: { tags: [operaciones], summary: Mantenimientos preventivos, responses: { '200': { description: Página } } }
+    post: { tags: [operaciones], summary: Programa un mantenimiento, responses: { '201': { description: Programado } } }
+  /mantenimientos/{id}/generar-orden:
+    post: { tags: [operaciones], summary: Genera la orden preventiva, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '201': { description: Orden } } }
+  /aprobaciones:
+    get: { tags: [operaciones], summary: Órdenes pendientes de aprobación, responses: { '200': { description: Página } } }
+  /tokens:
+    get: { tags: [operaciones], summary: Tokens de operación, responses: { '200': { description: Página } } }
+    post: { tags: [operaciones], summary: Emite un token de cierre crítico. El secreto se devuelve una sola vez, responses: { '201': { description: Token } } }
+  /tokens/{id}/revocar:
+    post: { tags: [operaciones], summary: Revoca un token, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Revocado } } }
+  /dashboard:
+    get: { tags: [reportes], summary: Indicadores calculados en PostgreSQL, responses: { '200': { description: Resumen } } }
+  /reportes/operativo:
+    get: { tags: [reportes], summary: Reporte operativo filtrable, responses: { '200': { description: Filas } } }
+  /reportes/sla:
+    get: { tags: [reportes], summary: Cumplimiento de SLA, responses: { '200': { description: Resumen } } }
+  /reportes/exportar:
+    get: { tags: [reportes], summary: CSV del reporte operativo o de SLA, responses: { '200': { description: text/csv } } }
+  /auditoria:
+    get: { tags: [reportes], summary: Bitácora, responses: { '200': { description: Página } } }
+  /auditoria/verificar:
+    get: { tags: [reportes], summary: Recalcula la cadena de hashes, responses: { '200': { description: Resultado de integridad } } }
+  /notificaciones:
+    get: { tags: [reportes], summary: Avisos del usuario, responses: { '200': { description: Avisos } } }
+  /notificaciones/leer-todas:
+    post: { tags: [reportes], summary: Marca todos los avisos como leídos, responses: { '200': { description: Actualizado } } }
+  /notificaciones/{id}/leida:
+    post: { tags: [reportes], summary: Marca un aviso como leído, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Actualizado } } }
+  /configuracion:
+    get: { tags: [reportes], summary: Parámetros del sistema, responses: { '200': { description: Claves } } }
+    put: { tags: [reportes], summary: Actualiza evidencia mínima, checklist obligatorio y nombre, responses: { '200': { description: Actualizada } } }
+  /sync:
+    post:
+      tags: [operaciones]
+      summary: Aplica la cola offline con identificadores idempotentes
+      responses:
+        '200': { description: Resultado por operación }
+  /tecnico/ordenes:
+    get: { tags: [operaciones], summary: Órdenes asignadas al técnico autenticado, responses: { '200': { description: Página } } }
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sigot_access
+  parameters:
+    id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }

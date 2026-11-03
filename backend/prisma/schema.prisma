@@ -1,0 +1,750 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum EstadoActivo {
+  OPERATIVO
+  CON_FALLA
+  EN_MANTENIMIENTO
+  FUERA_DE_SERVICIO
+  RETIRADO
+}
+
+enum Prioridad {
+  BAJA
+  MEDIA
+  ALTA
+  CRITICA
+}
+
+enum EstadoIncidente {
+  ABIERTO
+  CONVERTIDO
+  CERRADO
+  CANCELADO
+}
+
+enum EstadoOrden {
+  PENDIENTE
+  ASIGNADA
+  ACEPTADA
+  EN_PROCESO
+  PENDIENTE_APROBACION
+  FINALIZADA
+  RECHAZADA
+  CANCELADA
+}
+
+enum OrigenOrden {
+  CORRECTIVO
+  PREVENTIVO
+}
+
+enum EstadoAsignacion {
+  PENDIENTE
+  ACEPTADA
+  RECHAZADA
+  REASIGNADA
+}
+
+enum TipoMovimiento {
+  ENTRADA
+  SALIDA
+  ENTREGA
+  CONSUMO
+  DEVOLUCION
+}
+
+enum EstadoRepuesto {
+  ACTIVO
+  INACTIVO
+}
+
+enum FrecuenciaMantenimiento {
+  DIARIA
+  SEMANAL
+  MENSUAL
+  TRIMESTRAL
+  SEMESTRAL
+  ANUAL
+}
+
+enum EstadoMantenimiento {
+  PROGRAMADO
+  ORDEN_GENERADA
+  COMPLETADO
+  CANCELADO
+}
+
+enum EstadoAprobacion {
+  PENDIENTE
+  APROBADA
+  RECHAZADA
+}
+
+enum EstadoToken {
+  ACTIVO
+  UTILIZADO
+  EXPIRADO
+  REVOCADO
+}
+
+enum PropositoToken {
+  CIERRE_CRITICO
+}
+
+enum ResultadoAuditoria {
+  EXITO
+  FALLO
+}
+
+enum RolCuadrilla {
+  RESPONSABLE
+  MIEMBRO
+}
+
+enum TipoHistorialActivo {
+  INCIDENTE
+  ORDEN
+  REPARACION
+  REPUESTO
+  DIAGNOSTICO
+  EVIDENCIA
+  CAMBIO_ESTADO
+  MANTENIMIENTO
+  QR
+}
+
+model Usuario {
+  id               String    @id @default(uuid()) @db.Uuid
+  correo           String    @unique
+  contrasenaHash   String
+  nombre           String
+  apellido         String
+  telefono         String?
+  activo           Boolean   @default(true)
+  debeCambiarClave Boolean   @default(false)
+  ultimoAcceso     DateTime?
+  creadoEn         DateTime  @default(now())
+  actualizadoEn    DateTime  @updatedAt
+
+  roles                   UsuarioRol[]
+  sesiones                Sesion[]
+  tokensRecuperacion      TokenRecuperacion[]
+  notificaciones          Notificacion[]
+  tecnico                 Tecnico?
+  incidentesReportados    Incidente[]            @relation("IncidenteReportadoPor")
+  ordenesAbiertas         OrdenTrabajo[]         @relation("OrdenAbiertaPor")
+  historialEstados        HistorialEstadoOrden[] @relation("HistorialOrdenUsuario")
+  evidencias              Evidencia[]            @relation("EvidenciaSubidaPor")
+  movimientos             MovimientoRepuesto[]   @relation("MovimientoRealizadoPor")
+  aprobacionesSolicitadas Aprobacion[]           @relation("AprobacionSolicitada")
+  aprobacionesRevisadas   Aprobacion[]           @relation("AprobacionRevisada")
+  tokensCreados           TokenOperacion[]       @relation("TokenCreadoPor")
+  tokensAutorizados       TokenOperacion[]       @relation("TokenAutorizado")
+  auditorias              Auditoria[]
+  historialActivos        HistorialActivo[]      @relation("HistorialActivoUsuario")
+  idempotencias           Idempotencia[]
+  asignacionesHechas      Asignacion[]           @relation("AsignacionAsignadaPor")
+
+  @@index([activo])
+  @@map("usuarios")
+}
+
+model Rol {
+  id            String       @id @default(uuid()) @db.Uuid
+  codigo        String       @unique
+  nombre        String
+  descripcion   String?
+  creadoEn      DateTime     @default(now())
+  actualizadoEn DateTime     @updatedAt
+  usuarios      UsuarioRol[]
+  permisos      RolPermiso[]
+
+  @@map("roles")
+}
+
+model Permiso {
+  id          String       @id @default(uuid()) @db.Uuid
+  codigo      String       @unique
+  modulo      String
+  descripcion String
+  roles       RolPermiso[]
+
+  @@index([modulo])
+  @@map("permisos")
+}
+
+model UsuarioRol {
+  usuarioId  String   @db.Uuid
+  rolId      String   @db.Uuid
+  asignadoEn DateTime @default(now())
+  usuario    Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  rol        Rol      @relation(fields: [rolId], references: [id], onDelete: Cascade)
+
+  @@id([usuarioId, rolId])
+  @@map("usuario_roles")
+}
+
+model RolPermiso {
+  rolId     String  @db.Uuid
+  permisoId String  @db.Uuid
+  rol       Rol     @relation(fields: [rolId], references: [id], onDelete: Cascade)
+  permiso   Permiso @relation(fields: [permisoId], references: [id], onDelete: Cascade)
+
+  @@id([rolId, permisoId])
+  @@map("rol_permisos")
+}
+
+model Sesion {
+  id           String    @id @default(uuid()) @db.Uuid
+  usuarioId    String    @db.Uuid
+  refreshHash  String    @unique
+  csrfToken    String
+  agente       String?
+  ip           String?
+  expiraEn     DateTime
+  revocadaEn   DateTime?
+  creadoEn     DateTime  @default(now())
+  usuario      Usuario   @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([usuarioId])
+  @@map("sesiones")
+}
+
+model TokenRecuperacion {
+  id         String    @id @default(uuid()) @db.Uuid
+  usuarioId  String    @db.Uuid
+  tokenHash  String    @unique
+  expiraEn   DateTime
+  usadoEn    DateTime?
+  creadoEn   DateTime  @default(now())
+  usuario    Usuario   @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([usuarioId])
+  @@map("tokens_recuperacion")
+}
+
+model Cliente {
+  id            String      @id @default(uuid()) @db.Uuid
+  codigo        String      @unique
+  nombre        String
+  nit           String?
+  correo        String?
+  telefono      String?
+  direccion     String?
+  activo        Boolean     @default(true)
+  creadoEn      DateTime    @default(now())
+  actualizadoEn DateTime    @updatedAt
+  ubicaciones   Ubicacion[]
+  activos       Activo[]
+
+  @@index([nombre])
+  @@map("clientes")
+}
+
+model Ubicacion {
+  id            String   @id @default(uuid()) @db.Uuid
+  clienteId     String   @db.Uuid
+  codigo        String
+  nombre        String
+  direccion     String
+  ciudad        String?
+  latitud       Float?
+  longitud      Float?
+  activo        Boolean  @default(true)
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+  cliente       Cliente  @relation(fields: [clienteId], references: [id])
+  activos       Activo[]
+
+  @@unique([clienteId, codigo])
+  @@index([clienteId])
+  @@map("ubicaciones")
+}
+
+model TipoActivo {
+  id            String              @id @default(uuid()) @db.Uuid
+  codigo        String              @unique
+  nombre        String
+  descripcion   String?
+  activo        Boolean             @default(true)
+  creadoEn      DateTime            @default(now())
+  actualizadoEn DateTime            @updatedAt
+  activos       Activo[]
+  plantillas    PlantillaChecklist[]
+
+  @@map("tipos_activo")
+}
+
+model Activo {
+  id             String        @id @default(uuid()) @db.Uuid
+  codigo         String        @unique
+  nombre         String
+  tipoActivoId   String        @db.Uuid
+  marca          String?
+  modelo         String?
+  serie          String?       @unique
+  clienteId      String        @db.Uuid
+  ubicacionId    String        @db.Uuid
+  estado         EstadoActivo  @default(OPERATIVO)
+  qrSecreto      String        @unique
+  fechaRegistro  DateTime      @default(now())
+  notas          String?
+  creadoEn       DateTime      @default(now())
+  actualizadoEn  DateTime      @updatedAt
+  tipoActivo     TipoActivo    @relation(fields: [tipoActivoId], references: [id])
+  cliente        Cliente       @relation(fields: [clienteId], references: [id])
+  ubicacion      Ubicacion     @relation(fields: [ubicacionId], references: [id])
+  incidentes     Incidente[]
+  ordenes        OrdenTrabajo[]
+  mantenimientos MantenimientoPreventivo[]
+  historial      HistorialActivo[]
+
+  @@index([clienteId])
+  @@index([ubicacionId])
+  @@index([estado])
+  @@index([tipoActivoId])
+  @@map("activos")
+}
+
+model Incidente {
+  id             String           @id @default(uuid()) @db.Uuid
+  codigo         String           @unique
+  activoId       String           @db.Uuid
+  descripcion    String
+  prioridad      Prioridad
+  estado         EstadoIncidente  @default(ABIERTO)
+  reportadoPorId String           @db.Uuid
+  fechaReporte   DateTime         @default(now())
+  creadoEn       DateTime         @default(now())
+  actualizadoEn  DateTime         @updatedAt
+  activo         Activo           @relation(fields: [activoId], references: [id])
+  reportadoPor   Usuario          @relation("IncidenteReportadoPor", fields: [reportadoPorId], references: [id])
+  orden          OrdenTrabajo?
+
+  @@index([activoId])
+  @@index([estado])
+  @@index([prioridad])
+  @@map("incidentes")
+}
+
+model OrdenTrabajo {
+  id                       String       @id @default(uuid()) @db.Uuid
+  codigo                   String       @unique
+  incidenteId              String?      @unique @db.Uuid
+  activoId                 String       @db.Uuid
+  titulo                   String
+  descripcion              String
+  prioridad                Prioridad
+  origen                   OrigenOrden  @default(CORRECTIVO)
+  estado                   EstadoOrden  @default(PENDIENTE)
+  slaRespuestaVenceEn      DateTime
+  slaResolucionVenceEn     DateTime
+  slaRespuestaIncumplido   Boolean      @default(false)
+  slaResolucionIncumplido  Boolean      @default(false)
+  abiertaPorId             String       @db.Uuid
+  tecnicoId                String?      @db.Uuid
+  cuadrillaId              String?      @db.Uuid
+  diagnostico              String?
+  solucion                 String?
+  fechaInicio              DateTime?
+  fechaSolicitudCierre     DateTime?
+  fechaCierre              DateTime?
+  version                  Int          @default(0)
+  creadoEn                 DateTime     @default(now())
+  actualizadoEn            DateTime     @updatedAt
+
+  incidente      Incidente?             @relation(fields: [incidenteId], references: [id])
+  activo         Activo                 @relation(fields: [activoId], references: [id])
+  abiertaPor     Usuario                @relation("OrdenAbiertaPor", fields: [abiertaPorId], references: [id])
+  tecnico        Tecnico?               @relation("TecnicoResponsable", fields: [tecnicoId], references: [id])
+  cuadrilla      Cuadrilla?             @relation(fields: [cuadrillaId], references: [id])
+  historial      HistorialEstadoOrden[]
+  asignaciones   Asignacion[]
+  evidencias     Evidencia[]
+  movimientos    MovimientoRepuesto[]
+  checklists     ChecklistOrden[]
+  aprobaciones   Aprobacion[]
+  tokens         TokenOperacion[]
+  mantenimientos MantenimientoPreventivo[]
+
+  @@index([estado])
+  @@index([prioridad])
+  @@index([activoId])
+  @@index([tecnicoId])
+  @@index([cuadrillaId])
+  @@index([slaResolucionVenceEn])
+  @@map("ordenes_trabajo")
+}
+
+model HistorialEstadoOrden {
+  id              String       @id @default(uuid()) @db.Uuid
+  ordenId         String       @db.Uuid
+  estadoAnterior  EstadoOrden?
+  estadoNuevo     EstadoOrden
+  motivo          String?
+  cambiadoPorId   String       @db.Uuid
+  creadoEn        DateTime     @default(now())
+  orden           OrdenTrabajo @relation(fields: [ordenId], references: [id], onDelete: Cascade)
+  cambiadoPor     Usuario      @relation("HistorialOrdenUsuario", fields: [cambiadoPorId], references: [id])
+
+  @@index([ordenId])
+  @@map("historial_estados_orden")
+}
+
+model PoliticaSla {
+  id                 String    @id @default(uuid()) @db.Uuid
+  prioridad          Prioridad @unique
+  minutosRespuesta   Int
+  minutosResolucion  Int
+  activa             Boolean   @default(true)
+  actualizadoEn      DateTime  @updatedAt
+
+  @@map("politicas_sla")
+}
+
+model Tecnico {
+  id              String   @id @default(uuid()) @db.Uuid
+  usuarioId       String   @unique @db.Uuid
+  codigoEmpleado  String   @unique
+  especialidad    String?
+  activo          Boolean  @default(true)
+  creadoEn        DateTime @default(now())
+  actualizadoEn   DateTime @updatedAt
+  usuario         Usuario  @relation(fields: [usuarioId], references: [id])
+  cuadrillasResponsable Cuadrilla[] @relation("ResponsableCuadrilla")
+  membresias      CuadrillaMiembro[]
+  asignaciones    Asignacion[] @relation("AsignacionTecnico")
+  respuestasAsignacion Asignacion[] @relation("AsignacionRespondida")
+  ordenes         OrdenTrabajo[] @relation("TecnicoResponsable")
+  mantenimientos  MantenimientoPreventivo[]
+  checklists      ChecklistOrden[]
+
+  @@map("tecnicos")
+}
+
+model Cuadrilla {
+  id            String   @id @default(uuid()) @db.Uuid
+  codigo        String   @unique
+  nombre        String
+  responsableId String   @db.Uuid
+  activa        Boolean  @default(true)
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+  responsable   Tecnico  @relation("ResponsableCuadrilla", fields: [responsableId], references: [id])
+  miembros      CuadrillaMiembro[]
+  asignaciones  Asignacion[]
+  ordenes       OrdenTrabajo[]
+
+  @@map("cuadrillas")
+}
+
+model CuadrillaMiembro {
+  cuadrillaId String      @db.Uuid
+  tecnicoId   String      @db.Uuid
+  rol         RolCuadrilla @default(MIEMBRO)
+  cuadrilla   Cuadrilla   @relation(fields: [cuadrillaId], references: [id], onDelete: Cascade)
+  tecnico     Tecnico     @relation(fields: [tecnicoId], references: [id], onDelete: Cascade)
+
+  @@id([cuadrillaId, tecnicoId])
+  @@map("cuadrilla_miembros")
+}
+
+model Asignacion {
+  id               String            @id @default(uuid()) @db.Uuid
+  ordenId          String            @db.Uuid
+  tecnicoId        String?           @db.Uuid
+  cuadrillaId      String?           @db.Uuid
+  asignadoPorId    String            @db.Uuid
+  estado           EstadoAsignacion  @default(PENDIENTE)
+  motivo           String?
+  fechaAsignacion  DateTime          @default(now())
+  fechaRespuesta   DateTime?
+  respondidoPorId  String?           @db.Uuid
+  orden            OrdenTrabajo      @relation(fields: [ordenId], references: [id])
+  tecnico          Tecnico?          @relation("AsignacionTecnico", fields: [tecnicoId], references: [id])
+  cuadrilla        Cuadrilla?        @relation(fields: [cuadrillaId], references: [id])
+  respondidoPor    Tecnico?          @relation("AsignacionRespondida", fields: [respondidoPorId], references: [id])
+  asignadoPor      Usuario           @relation("AsignacionAsignadaPor", fields: [asignadoPorId], references: [id])
+
+  @@index([ordenId])
+  @@index([tecnicoId])
+  @@index([cuadrillaId])
+  @@map("asignaciones")
+}
+
+model CategoriaRepuesto {
+  id          String     @id @default(uuid()) @db.Uuid
+  nombre      String     @unique
+  descripcion String?
+  repuestos   Repuesto[]
+
+  @@map("categorias_repuesto")
+}
+
+model Repuesto {
+  id                String         @id @default(uuid()) @db.Uuid
+  codigo            String         @unique
+  nombre            String
+  descripcion       String?
+  categoriaId       String         @db.Uuid
+  stock             Int            @default(0)
+  stockMinimo       Int            @default(0)
+  ubicacionAlmacen  String?
+  estado            EstadoRepuesto @default(ACTIVO)
+  creadoEn          DateTime       @default(now())
+  actualizadoEn     DateTime       @updatedAt
+  categoria         CategoriaRepuesto @relation(fields: [categoriaId], references: [id])
+  movimientos       MovimientoRepuesto[]
+
+  @@index([categoriaId])
+  @@index([estado])
+  @@map("repuestos")
+}
+
+model MovimientoRepuesto {
+  id                String         @id @default(uuid()) @db.Uuid
+  repuestoId        String         @db.Uuid
+  tipo              TipoMovimiento
+  cantidad          Int
+  stockResultante   Int
+  ordenId           String?        @db.Uuid
+  realizadoPorId    String         @db.Uuid
+  notas             String?
+  clientMutationId  String?        @unique
+  creadoEn          DateTime       @default(now())
+  repuesto          Repuesto       @relation(fields: [repuestoId], references: [id])
+  orden             OrdenTrabajo?  @relation(fields: [ordenId], references: [id])
+  realizadoPor      Usuario        @relation("MovimientoRealizadoPor", fields: [realizadoPorId], references: [id])
+
+  @@index([repuestoId])
+  @@index([ordenId])
+  @@index([tipo])
+  @@map("movimientos_repuesto")
+}
+
+model PlantillaChecklist {
+  id           String         @id @default(uuid()) @db.Uuid
+  nombre       String
+  descripcion  String?
+  tipoActivoId String?        @db.Uuid
+  activa       Boolean        @default(true)
+  creadoEn     DateTime       @default(now())
+  actualizadoEn DateTime      @updatedAt
+  tipoActivo   TipoActivo?    @relation(fields: [tipoActivoId], references: [id])
+  items        ItemPlantilla[]
+  checklists   ChecklistOrden[]
+
+  @@map("plantillas_checklist")
+}
+
+model ItemPlantilla {
+  id          String             @id @default(uuid()) @db.Uuid
+  plantillaId String             @db.Uuid
+  texto       String
+  obligatorio Boolean            @default(false)
+  posicion    Int
+  plantilla   PlantillaChecklist @relation(fields: [plantillaId], references: [id], onDelete: Cascade)
+  respuestas  RespuestaChecklist[]
+
+  @@index([plantillaId])
+  @@map("items_plantilla")
+}
+
+model ChecklistOrden {
+  id            String             @id @default(uuid()) @db.Uuid
+  ordenId       String             @db.Uuid
+  plantillaId   String             @db.Uuid
+  tecnicoId     String?            @db.Uuid
+  creadoEn      DateTime           @default(now())
+  completadoEn  DateTime?
+  orden         OrdenTrabajo       @relation(fields: [ordenId], references: [id])
+  plantilla     PlantillaChecklist @relation(fields: [plantillaId], references: [id])
+  tecnico       Tecnico?           @relation(fields: [tecnicoId], references: [id])
+  respuestas    RespuestaChecklist[]
+
+  @@unique([ordenId, plantillaId])
+  @@index([ordenId])
+  @@map("checklists_orden")
+}
+
+model RespuestaChecklist {
+  id           String           @id @default(uuid()) @db.Uuid
+  checklistId  String           @db.Uuid
+  itemId       String           @db.Uuid
+  cumplida     Boolean          @default(false)
+  observacion  String?
+  checklist    ChecklistOrden   @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+  item         ItemPlantilla    @relation(fields: [itemId], references: [id])
+
+  @@unique([checklistId, itemId])
+  @@map("respuestas_checklist")
+}
+
+model Evidencia {
+  id                String       @id @default(uuid()) @db.Uuid
+  ordenId           String       @db.Uuid
+  nombreOriginal    String
+  nombreAlmacenado  String
+  mime              String
+  tamano            Int
+  subidaPorId       String       @db.Uuid
+  clientMutationId  String?      @unique
+  creadoEn          DateTime     @default(now())
+  orden             OrdenTrabajo @relation(fields: [ordenId], references: [id])
+  subidaPor         Usuario      @relation("EvidenciaSubidaPor", fields: [subidaPorId], references: [id])
+
+  @@index([ordenId])
+  @@map("evidencias")
+}
+
+model MantenimientoPreventivo {
+  id              String                   @id @default(uuid()) @db.Uuid
+  activoId        String                   @db.Uuid
+  descripcion     String
+  frecuencia      FrecuenciaMantenimiento
+  fechaProgramada DateTime
+  fechaEjecucion  DateTime?
+  responsableId   String                   @db.Uuid
+  estado          EstadoMantenimiento      @default(PROGRAMADO)
+  ordenId         String?                  @unique @db.Uuid
+  creadoEn        DateTime                 @default(now())
+  actualizadoEn   DateTime                 @updatedAt
+  activo          Activo                   @relation(fields: [activoId], references: [id])
+  responsable     Tecnico                  @relation(fields: [responsableId], references: [id])
+  orden           OrdenTrabajo?            @relation(fields: [ordenId], references: [id])
+
+  @@index([activoId])
+  @@index([estado])
+  @@index([fechaProgramada])
+  @@map("mantenimientos_preventivos")
+}
+
+model Aprobacion {
+  id              String           @id @default(uuid()) @db.Uuid
+  ordenId         String           @db.Uuid
+  solicitadoPorId String           @db.Uuid
+  revisadoPorId   String?          @db.Uuid
+  estado          EstadoAprobacion @default(PENDIENTE)
+  observaciones   String?
+  tokenId         String?          @unique @db.Uuid
+  solicitadoEn    DateTime         @default(now())
+  revisadoEn      DateTime?
+  orden           OrdenTrabajo     @relation(fields: [ordenId], references: [id])
+  solicitadoPor   Usuario          @relation("AprobacionSolicitada", fields: [solicitadoPorId], references: [id])
+  revisadoPor     Usuario?         @relation("AprobacionRevisada", fields: [revisadoPorId], references: [id])
+  token           TokenOperacion?  @relation(fields: [tokenId], references: [id])
+
+  @@index([ordenId])
+  @@index([estado])
+  @@map("aprobaciones")
+}
+
+model TokenOperacion {
+  id                  String         @id @default(uuid()) @db.Uuid
+  ordenId             String         @db.Uuid
+  proposito           PropositoToken
+  expiraEn            DateTime
+  estado              EstadoToken    @default(ACTIVO)
+  usuarioAutorizadoId String         @db.Uuid
+  tokenHash           String         @unique
+  creadoPorId         String         @db.Uuid
+  usadoEn             DateTime?
+  creadoEn            DateTime       @default(now())
+  orden               OrdenTrabajo   @relation(fields: [ordenId], references: [id])
+  usuarioAutorizado   Usuario        @relation("TokenAutorizado", fields: [usuarioAutorizadoId], references: [id])
+  creadoPor           Usuario        @relation("TokenCreadoPor", fields: [creadoPorId], references: [id])
+  aprobacion          Aprobacion?
+
+  @@index([ordenId])
+  @@index([estado])
+  @@map("tokens_operacion")
+}
+
+model HistorialActivo {
+  id              String              @id @default(uuid()) @db.Uuid
+  activoId        String              @db.Uuid
+  tipo            TipoHistorialActivo
+  descripcion     String
+  referenciaTipo  String?
+  referenciaId    String?
+  usuarioId       String?             @db.Uuid
+  detalle         Json?
+  creadoEn        DateTime            @default(now())
+  activo          Activo              @relation(fields: [activoId], references: [id])
+  usuario         Usuario?            @relation("HistorialActivoUsuario", fields: [usuarioId], references: [id])
+
+  @@index([activoId, creadoEn])
+  @@map("historial_activos")
+}
+
+model Auditoria {
+  id          String             @id @default(uuid()) @db.Uuid
+  secuencia   Int                @unique
+  usuarioId   String?            @db.Uuid
+  accion      String
+  entidad     String
+  entidadId   String?
+  resultado   ResultadoAuditoria
+  ip          String?
+  agente      String?
+  detalle     Json?
+  hashPrevio  String
+  hash        String
+  creadoEn    DateTime           @default(now())
+  usuario     Usuario?           @relation(fields: [usuarioId], references: [id])
+
+  @@index([usuarioId])
+  @@index([entidad, entidadId])
+  @@index([accion])
+  @@index([creadoEn])
+  @@map("auditoria")
+}
+
+model Notificacion {
+  id         String   @id @default(uuid()) @db.Uuid
+  usuarioId  String   @db.Uuid
+  titulo     String
+  mensaje    String
+  enlace     String?
+  leida      Boolean  @default(false)
+  creadoEn   DateTime @default(now())
+  usuario    Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([usuarioId, leida])
+  @@map("notificaciones")
+}
+
+model Configuracion {
+  clave          String   @id
+  valor          Json
+  actualizadoEn  DateTime @updatedAt
+
+  @@map("configuracion")
+}
+
+model Secuencia {
+  nombre String @id
+  valor  Int    @default(0)
+
+  @@map("secuencias")
+}
+
+model Idempotencia {
+  clave      String   @id
+  usuarioId  String   @db.Uuid
+  ruta       String
+  estado     Int
+  cuerpo     Json
+  creadoEn   DateTime @default(now())
+  usuario    Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([usuarioId])
+  @@map("idempotencia")
+}

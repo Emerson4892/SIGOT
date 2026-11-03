@@ -1,0 +1,123 @@
+name: sigot-prod
+
+# Producción en un Droplet. PostgreSQL y la API no publican puertos.
+# Arranque: docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+# El proxy usa HTTP hasta que deploy/init-letsencrypt.sh emite el certificado.
+# No monte archivos de certificado en el primer arranque: los volúmenes nacen vacíos.
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Defina POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?Defina POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    image: ${SIGOT_IMAGE_BACKEND:-sigot-backend:local}
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      POSTGRES_USER: ${POSTGRES_USER:?Defina POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?Defina POSTGRES_DB}
+      DATABASE_HOST: db
+      DATABASE_PORT: "5432"
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?Defina JWT_ACCESS_SECRET}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
+      REFRESH_TTL_DAYS: ${REFRESH_TTL_DAYS:-7}
+      CORS_ORIGIN: ${APP_URL:?Defina APP_URL con la URL HTTPS pública, sin barra final}
+      APP_URL: ${APP_URL:?Defina APP_URL con la URL HTTPS pública, sin barra final}
+      SIGOT_DOMAIN: ${SIGOT_DOMAIN:?Defina SIGOT_DOMAIN sin esquema ni barra}
+      COOKIE_SECURE: "true"
+      UPLOAD_DIR: /app/uploads
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-8}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TRUST_PROXY: "true"
+      LOG_RESET_LINKS: "false"
+      SEED_DEMO_USERS: "false"
+      ADMIN_INICIAL_CORREO: ${ADMIN_INICIAL_CORREO:?Defina ADMIN_INICIAL_CORREO}
+      ADMIN_INICIAL_PASSWORD: ${ADMIN_INICIAL_PASSWORD:?Defina ADMIN_INICIAL_PASSWORD}
+      ADMIN_INICIAL_NOMBRE: ${ADMIN_INICIAL_NOMBRE:-Administrador}
+      ADMIN_INICIAL_APELLIDO: ${ADMIN_INICIAL_APELLIDO:-Inicial}
+    volumes:
+      - uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/api/salud').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    image: ${SIGOT_IMAGE_FRONTEND:-sigot-frontend:local}
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/salud"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
+
+  proxy:
+    build:
+      context: ./deploy
+      dockerfile: Dockerfile.proxy
+    image: ${SIGOT_IMAGE_PROXY:-sigot-proxy:local}
+    depends_on:
+      frontend:
+        condition: service_healthy
+    environment:
+      SIGOT_DOMAIN: ${SIGOT_DOMAIN:?Defina SIGOT_DOMAIN sin esquema ni barra}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx-bootstrap.conf:/etc/nginx/sigot/http.conf:ro
+      - ./deploy/nginx-edge.conf:/etc/nginx/sigot/https.conf:ro
+      - ./deploy/nginx-select-config.sh:/etc/nginx/sigot/select-config.sh:ro
+      - ./deploy/nginx-start.sh:/etc/nginx/sigot/nginx-start.sh:ro
+      - certbot-www:/var/www/certbot
+      - letsencrypt:/etc/letsencrypt
+      - proxy-certs:/etc/nginx/certs
+    command: ["/bin/sh", "-c", "tr -d '\\r' < /etc/nginx/sigot/nginx-start.sh > /tmp/sigot-nginx-start.sh && sh /tmp/sigot-nginx-start.sh"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/salud-proxy"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
+
+  certbot:
+    image: certbot/certbot:v2.11.0
+    volumes:
+      - certbot-www:/var/www/certbot
+      - letsencrypt:/etc/letsencrypt
+    entrypoint: /bin/sh
+    command: ["-c", "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet || true; sleep 12h; done"]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  uploads:
+  certbot-www:
+  letsencrypt:
+  proxy-certs:
